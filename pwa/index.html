@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My PWA with WebGL</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    body { margin: 0; overflow: hidden; }
+    #webgl-canvas { width: 100vw; height: 100vh; display: block; }
+  </style>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js')
+          .then(registration => {
+            console.log('ServiceWorker registration successful with scope: ', registration.scope);
+          })
+          .catch(error => {
+            console.log('ServiceWorker registration failed: ', error);
+          });
+      });
+    }
+  </script>
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+  <canvas id="webgl-canvas"></canvas>
+  <div style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(255,255,255,0.7); padding: 10px;">
+    <button id="initP2PButton">Initialize P2P Connection</button>
+    <button id="createOfferButton">1. Create Offer</button>
+    <br>
+    <textarea id="offerSdp" placeholder="Paste Offer SDP here then click Handle Offer"></textarea>
+    <button id="handleOfferButton">2. Handle Offer / Create Answer</button>
+    <br>
+    <textarea id="answerSdp" placeholder="Paste Answer SDP here then click Handle Answer"></textarea>
+    <button id="handleAnswerButton">3. Handle Answer</button>
+    <br>
+    <hr>
+    <button id="assignTaskButton">Assign Task (Test)</button>
+    <button id="viewLocalCompletedTasksButton">View Local Completed Tasks</button>
+    <p>P2P Status: <span id="p2pStatus">Not connected</span></p>
+    <p>Local Agent: <span id="localAgentStatus">N/A</span></p>
+    <p>Remote Agent: <span id="remoteAgentStatus">N/A</span></p>
+    <div id="completedTasksDisplay" style="margin-top: 10px; border: 1px solid #ccc; padding: 5px; max-height: 200px; overflow-y: auto;">
+      <h4>Completed Task Results:</h4>
+      <ul id="completedTasksList"></ul>
+    </div>
+  </div>
+
+  <script src="../shared/agent-coordination.js"></script>
+  <script src="../shared/p2p.js"></script>
+  <script src="../webgl/main.js"></script>
+  <script>
+    // P2P UI Logic
+    const initP2PButton = document.getElementById('initP2PButton');
+    const createOfferButton = document.getElementById('createOfferButton');
+    const handleOfferButton = document.getElementById('handleOfferButton');
+    const handleAnswerButton = document.getElementById('handleAnswerButton');
+    const offerSdpText = document.getElementById('offerSdp');
+    const answerSdpText = document.getElementById('answerSdp');
+    const assignTaskButton = document.getElementById('assignTaskButton');
+    const p2pStatus = document.getElementById('p2pStatus');
+    const localAgentStatus = document.getElementById('localAgentStatus');
+    const remoteAgentStatus = document.getElementById('remoteAgentStatus');
+    const completedTasksList = document.getElementById('completedTasksList');
+    const viewLocalCompletedTasksButton = document.getElementById('viewLocalCompletedTasksButton');
+
+
+    // Function to be called by agent-coordination.js when a task result is ready for display
+    window.updateCompletedTasksDisplay = function(agentId, task) {
+      const item = document.createElement('li');
+      item.textContent = `Agent ${agentId} (originally assigned task ${task.id}): ${task.description} -> ${task.result}`;
+      completedTasksList.appendChild(item);
+    };
+
+    viewLocalCompletedTasksButton.onclick = () => {
+      const la = getLocalAgent();
+      if (la) {
+        completedTasksList.innerHTML = ''; // Clear previous
+        const tasksToShow = [...la.completedTasks, ...Object.values(la.assignedTasks).filter(t => t.status === 'completed')];
+        if (tasksToShow.length === 0) {
+            const item = document.createElement('li');
+            item.textContent = `No completed tasks found for ${la.id}.`;
+            completedTasksList.appendChild(item);
+            return;
+        }
+        tasksToShow.forEach(task => {
+          const item = document.createElement('li');
+          let prefix = "";
+          if (la.completedTasks.includes(task)) {
+            prefix = `(Completed by ${la.id}): `;
+          } else {
+            prefix = `(Task ${task.id} assigned by ${la.id}, completed by other): `;
+          }
+          item.textContent = `${prefix} ${task.description} -> ${task.result}`;
+          completedTasksList.appendChild(item);
+        });
+      } else {
+        alert("Local agent not initialized.");
+      }
+    };
+
+    initP2PButton.onclick = () => {
+      initializePeerConnection(); // from p2p.js
+      p2pStatus.textContent = 'PeerConnection Initialized. Create an offer or wait for one.';
+      console.log("PeerConnection initialized via UI button.");
+      // Update agent statuses periodically or on events
+      setInterval(updateAgentStatusDisplay, 1000);
+    };
+
+    createOfferButton.onclick = async () => {
+      if (!getPeerConnection()) {
+        alert('Initialize P2P first!');
+        return;
+      }
+      await createOfferAndSetLocal(); // from p2p.js
+      offerSdpText.value = JSON.stringify(getPeerConnection().localDescription);
+      p2pStatus.textContent = 'Offer created. Copy it and send to peer. Then wait for an answer.';
+      console.log("Offer created via UI button.");
+    };
+
+    handleOfferButton.onclick = async () => {
+      if (!getPeerConnection()) {
+        alert('Initialize P2P first!');
+        return;
+      }
+      try {
+        const offer = JSON.parse(offerSdpText.value);
+        await handleOfferAndCreateAnswer(offer); // from p2p.js
+        answerSdpText.value = JSON.stringify(getPeerConnection().localDescription);
+        p2pStatus.textContent = 'Offer handled, answer created. Copy answer and send to offering peer.';
+        console.log("Offer handled and answer created via UI button.");
+      } catch (e) {
+        alert('Invalid Offer SDP or error handling offer: ' + e.message);
+        console.error(e);
+      }
+    };
+
+    handleAnswerButton.onclick = async () => {
+      if (!getPeerConnection()) {
+        alert('Initialize P2P first!');
+        return;
+      }
+      try {
+        const answer = JSON.parse(answerSdpText.value);
+        await handleAnswer(answer); // from p2p.js
+        p2pStatus.textContent = 'Answer handled. Connection should be established if ICE succeeds.';
+        console.log("Answer handled via UI button.");
+      } catch (e) {
+        alert('Invalid Answer SDP or error handling answer: ' + e.message);
+        console.error(e);
+      }
+    };
+
+    assignTaskButton.onclick = () => {
+      const localAg = getLocalAgent(); // from p2p.js
+      const remoteAg = getRemoteAgent(); // from p2p.js
+
+      if (!localAg) {
+        alert('Local agent not initialized. Establish P2P connection first.');
+        return;
+      }
+
+      // For testing, let's assume localAgent assigns a task to remoteAgent if it exists,
+      // otherwise to itself.
+      const taskDesc = "Process data block X";
+      if (remoteAg && remoteAg.dataChannel && remoteAg.dataChannel.readyState === 'open') {
+        console.log("UI: Assigning task from local to remote");
+        initiateTaskAssignment(localAg, remoteAg.id, taskDesc + " for remote");
+      } else if (localAg) {
+        console.log("UI: Assigning task from local to local (remote not available or channel closed)");
+        // The initiateTaskAssignment will assign to localAg if remoteAg is not found or channel not open
+        initiateTaskAssignment(localAg, 'RemoteAgent_Receiver', taskDesc + " for local self-test");
+      }
+       updateAgentStatusDisplay();
+    };
+
+    function updateAgentStatusDisplay() {
+        const la = getLocalAgent();
+        const ra = getRemoteAgent();
+        let currentLocalTaskDesc = 'none';
+        if (la) {
+            if (la.currentTask) currentLocalTaskDesc = la.currentTask.description;
+            else if (la.status === 'waiting_for_completion') {
+                const waitingTask = Object.values(la.assignedTasks).find(t => t.status === 'assigned' || t.status === 'in_progress');
+                if(waitingTask) currentLocalTaskDesc = `Waiting for: ${waitingTask.description}`;
+            }
+            localAgentStatus.textContent = `${la.id} - ${la.status} (Task: ${currentLocalTaskDesc})`;
+        } else {
+            localAgentStatus.textContent = "N/A";
+        }
+
+        if(ra) {
+            let currentRemoteTaskDesc = ra.currentTask ? ra.currentTask.description : 'none';
+             if (ra.status === 'waiting_for_completion') { // Should not typically happen for remote representation via this UI
+                const waitingTask = Object.values(ra.assignedTasks).find(t => t.status === 'assigned' || t.status === 'in_progress');
+                if(waitingTask) currentRemoteTaskDesc = `Waiting for: ${waitingTask.description}`;
+            }
+            remoteAgentStatus.textContent = `${ra.id} - ${ra.status} (Task: ${currentRemoteTaskDesc})`;
+        } else {
+            remoteAgentStatus.textContent = "N/A";
+        }
+
+        const pc = getPeerConnection();
+        if (pc) {
+            p2pStatus.textContent = `P2P ICE: ${pc.iceConnectionState}, Channel: ${getDataChannel() ? getDataChannel().readyState : 'N/A'}`;
+        }
+    }
+    // Initial call to set status might be too early if scripts are not fully loaded.
+    // setInterval(updateAgentStatusDisplay, 1000); // Already initialized in initP2PButton.onclick
+  </script>
+</body>
+</html>
