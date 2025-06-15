@@ -142,39 +142,55 @@ function createTask(description, assignerId = null) {
 }
 
 // Basic function to initiate task assignment
-function initiateTaskAssignment(assigningAgent, receivingAgentId, taskDescription) {
+// assigningAgent: The local agent instance (typically window.p2p.getLocalAgent())
+// receivingPeerId: The ID of the target peer (from signaling server)
+function initiateTaskAssignment(assigningAgent, receivingPeerId, taskDescription) {
   if (!assigningAgent) {
-    console.error("Assigning agent is not defined for initiateTaskAssignment.");
+    console.error("Assigning agent (local agent) is not defined for initiateTaskAssignment.");
     return;
+  }
+  if (!receivingPeerId) {
+    console.warn("No receivingPeerId provided. Assigning task locally to self.");
+    const selfTask = createTask(taskDescription, assigningAgent.id);
+    assigningAgent.assignTask(selfTask);
+    return;
+  }
+  if (assigningAgent.id === receivingPeerId) {
+     console.warn("Assigning agent is the same as receiving peer. Assigning task locally.");
+     const selfTask = createTask(taskDescription, assigningAgent.id);
+     assigningAgent.assignTask(selfTask);
+     return;
   }
 
   const task = createTask(taskDescription, assigningAgent.id);
-  const receivingAgent = agents.find(agent => agent.id === receivingAgentId);
 
-  if (receivingAgent && receivingAgent !== assigningAgent) {
-    console.log(`Agent ${assigningAgent.id} is initiating task "${task.description}" (ID: ${task.id}) for Agent ${receivingAgent.id}`);
-    if (receivingAgent.dataChannel && receivingAgent.dataChannel.readyState === 'open') {
-      receivingAgent.dataChannel.send(JSON.stringify({
-        type: 'taskAssignment',
-        task: task
-        // removed agentId from here, task.assignerId should be used by receiver if needed
-      }));
-      assigningAgent.assignedTasks[task.id] = task; // Store task that was assigned
-      assigningAgent.status = 'waiting_for_completion'; // Or simply remains 'idle' if it can do other things
-      task.status = 'assigned';
-      if (typeof updateAgentRepresentation === 'function') {
-        updateAgentRepresentation(assigningAgent.id, assigningAgent.status, task); // Show assigning agent as busy/waiting
-      }
-    } else {
-      console.warn(`No open data channel to ${receivingAgent.id}. Cannot assign task remotely.`);
-      // Optionally, assign to self or queue, but current requirement is to simulate sending.
-      // For now, do nothing if channel not open to remote.
+  // Get the remote agent instance and its data channel
+  const remotePeerAgent = window.agents && window.agents[receivingPeerId];
+
+  if (remotePeerAgent && remotePeerAgent.dataChannel && remotePeerAgent.dataChannel.readyState === 'open') {
+    console.log(`Agent ${assigningAgent.id} is initiating task "${task.description}" (ID: ${task.id}) for Peer ${receivingPeerId}`);
+
+    remotePeerAgent.dataChannel.send(JSON.stringify({
+      type: 'taskAssignment',
+      task: task
+    }));
+
+    assigningAgent.assignedTasks[task.id] = task; // Store task that was assigned
+    assigningAgent.status = 'waiting_for_completion';
+    task.status = 'assigned_remote'; // New status to indicate it's out for remote processing
+
+    if (typeof updateAgentRepresentation === 'function') {
+      updateAgentRepresentation(assigningAgent.id, assigningAgent.status, task);
     }
-  } else { // If receivingAgent is not found, or is the same as assigningAgent
-    console.warn(`Assigning task ${task.id} locally to ${assigningAgent.id} (Receiving agent ${receivingAgentId} not found or is self).`);
-    // assigningAgent.assignedTasks[task.id] = task; // Track it as if assigned to self
-    // task.status = 'assigned'; // not really assigned, but about to be processed by self
-    assigningAgent.assignTask(task); // Assign to self for processing
+    console.log(`Task ${task.id} sent to peer ${receivingPeerId}. Local agent ${assigningAgent.id} is waiting_for_completion.`);
+  } else {
+    console.warn(`Cannot assign task to ${receivingPeerId}: No open data channel or remote agent not found. `+
+                 `Remote agent: ${remotePeerAgent}, DC: ${remotePeerAgent ? remotePeerAgent.dataChannel : 'N/A'}`);
+    // Fallback: assign to self or handle error (e.g., alert user)
+    // For now, let's assign to self if remote fails, to maintain some functionality.
+    alert(`Could not send task to peer ${receivingPeerId}. Data channel not ready or peer not fully connected. Assigning task locally for now.`);
+    const selfTask = createTask(taskDescription + " (originally for " + receivingPeerId + ")", assigningAgent.id);
+    assigningAgent.assignTask(selfTask);
   }
 }
 

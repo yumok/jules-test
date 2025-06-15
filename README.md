@@ -30,14 +30,13 @@ The project is organized into the following main directories:
     -   `main.js`: Script for setting up and managing the Three.js scene, rendering agents, and updating their visual states based on information from the agent coordination module.
 
 -   **`shared/`**: Includes common JavaScript modules used by both the PWA and potentially other parts of the system.
-    -   `p2p.js`: Manages WebRTC peer-to-peer connections, data channel setup, and signaling message handling (currently manual SDP exchange).
+    -   `p2p.js`: Manages WebRTC peer-to-peer connections, data channel setup, and interacts with the signaling server for connection establishment (offer/answer/ICE candidate exchange).
     -   `agent-coordination.js`: Defines the `Agent` class, task structures, and logic for task assignment, processing (simulated), and status updates. It interacts with `p2p.js` for communication and `webgl/main.js` for visual updates.
 
--   **`server/`**: This directory is currently a placeholder for any future server-side logic. Potential uses could include:
-    -   A signaling server for automated WebRTC peer discovery.
-    -   User authentication services.
-    -   Persistent storage for agent data or task results, if a more centralized backup or logging is desired.
-    For the current client-centric, P2P-focused implementation, this directory is not actively used for the core agent operations.
+-   **`server/`**: Contains the Node.js-based WebSocket signaling server.
+    -   `signaling-server.js`: The script that facilitates peer discovery and WebRTC handshake message relay between clients.
+    -   `package.json`: Defines dependencies (like `ws` for WebSockets, `uuid` for client IDs) and start scripts for the server.
+    This server is essential for the automated P2P connection process.
 
 ## Build Instructions
 
@@ -64,11 +63,31 @@ Simply serve the project files using a local web server (see 'Running the Projec
 
 ## Running the Project (Deployment)
 
-### Serving the Application
+The project consists of two main parts that need to be running: the PWA (client-side) and the Signaling Server (server-side).
 
-To run the application and utilize its Progressive Web App (PWA) features (like service workers), you need to serve the files via an HTTP server. Opening the `index.html` file directly from the local filesystem (e.g., using a `file:///` URL) will not work correctly for PWA functionalities and may also restrict WebRTC capabilities depending on browser security settings.
+### 1. Start the Signaling Server
 
-A simple local HTTP server is sufficient for this purpose. Here are a few common ways to start one from the **project root directory**:
+The signaling server is crucial for clients (agents) to discover each other and exchange messages needed to establish direct WebRTC P2P connections.
+
+-   **Navigate to the server directory:**
+    ```bash
+    cd server
+    ```
+-   **Install dependencies (if you haven't already):**
+    ```bash
+    npm install
+    ```
+-   **Start the server:**
+    ```bash
+    npm start
+    ```
+    This will typically run `node signaling-server.js`. You should see a log message like "Signaling server started on ws://localhost:8080". Keep this terminal window open.
+
+### 2. Serving the PWA Application
+
+To run the PWA and utilize its features (like service workers), you need to serve its files via an HTTP server. Opening `pwa/index.html` directly from the local filesystem (e.g., using a `file:///` URL) will not work correctly.
+
+A simple local HTTP server is sufficient. Start this from the **project root directory** in a separate terminal window:
 
 1.  **Using Python:**
     *   If you have Python 3 installed:
@@ -97,59 +116,47 @@ A simple local HTTP server is sufficient for this purpose. Here are a few common
 
 Once your local HTTP server is running (e.g., on port 8000), open your web browser and navigate to:
 
-`http://localhost:8000/pwa/index.html`
+`http://localhost:8000/pwa/index.html` (if your HTTP server for the PWA is on port 8000).
 
-This will load the PWA, allowing you to test the WebRTC communication (by opening two instances or tabs and manually exchanging SDP offers/answers), observe the WebGL visualization, and interact with the agent task assignment features.
+This will load the PWA. Ensure the signaling server is running first.
 
 ## Usage Instructions
 
-To explore the current capabilities of the system, follow these steps:
+With the signaling server running and the PWA served via HTTP, you can test the system:
 
 1.  **Opening the Application for Two Peers:**
-    *   Open the application (e.g., `http://localhost:8000/pwa/index.html`) in two separate browser windows or tabs. These will represent your two distinct peers/agents.
+    *   Open the PWA (e.g., `http://localhost:8000/pwa/index.html`) in two separate browser windows or tabs. These will act as two distinct peers/agents.
 
-2.  **Initiating Peer-to-Peer Connection (Manual Signaling):**
-    The connection process currently requires manual exchange of signaling data (SDP offers and answers) between the two peers.
+2.  **Connect to Signaling Server:**
+    *   In **both windows**, click the "Connect to Signaling Server" button.
+    *   Observe the "Signaling Status" change to "Connected" and your unique "My Client ID" displayed.
 
-    *   **Step 1: Initialize P2P in Both Windows**
-        *   In **Window 1**, click the "Initialize P2P Connection" button.
-        *   In **Window 2**, click the "Initialize P2P Connection" button.
-        *   You should see the "P2P Status" update to "PeerConnection Initialized..." in both windows.
+3.  **Discover and Connect to Peers:**
+    *   In **Window 1**, click the "Discover Peers" button.
+    *   The "Available Peers" list should populate, showing the Client ID of the agent in Window 2.
+    *   In **Window 1**, click the "Connect" button next to the peer ID listed (which corresponds to Window 2).
+    *   The connection process (offer, answer, ICE candidates) will now happen automatically via the signaling server.
+    *   **Observe in both windows:**
+        *   The "P2P Connections" status should update, eventually indicating "connected" for that peer.
+        *   WebGL agent representations may appear or update based on successful P2P connection and data channel establishment.
 
-    *   **Step 2: Create Offer (Window 1 - Initiator)**
-        *   In **Window 1**, click the "1. Create Offer" button.
-        *   An SDP offer will be generated and displayed in the text area below it (labeled "Paste Offer SDP here...").
-        *   Copy this entire SDP offer string.
-
-    *   **Step 3: Handle Offer & Create Answer (Window 2 - Receiver)**
-        *   In **Window 2**, paste the copied SDP offer into its larger text area (labeled "Paste Offer SDP here...").
-        *   Click the "2. Handle Offer / Create Answer" button.
-        *   An SDP answer will be generated by Window 2 and displayed in its *lower* text area (labeled "Paste Answer SDP here...").
-        *   Copy this entire SDP answer string.
-
-    *   **Step 4: Handle Answer (Window 1 - Initiator)**
-        *   Go back to **Window 1**.
-        *   Paste the copied SDP answer (from Window 2) into Window 1's *lower* text area (labeled "Paste Answer SDP here...").
-        *   Click the "3. Handle Answer" button.
-
-    *   **Confirmation:**
-        *   After a few moments, the "P2P Status" in both windows should indicate an established connection (e.g., "ICE: connected, Channel: open").
-        *   In the WebGL canvas, you should see representations for "LocalAgent" and "RemoteAgent" appear (initially as grey or blue cubes). The names might vary slightly based on which peer initiated.
-
-3.  **Assigning a Test Task:**
-    *   Once the P2P connection is established, in **either window**, click the "Assign Task (Test)" button.
-    *   This will typically assign a task from the "Local Agent" in that window to the "Remote Agent" (the agent in the other window).
+4.  **Assigning a Test Task:**
+    *   Once a P2P connection is established between the two peers (e.g., Window 1 is connected to Window 2):
+        *   In **Window 1**, select the Client ID of Window 2 from the "Target Peer for Task" dropdown.
+        *   Click the "Assign Task to Selected Peer" button.
+    *   Alternatively, in either window, click "Assign Task Locally" to have the local agent process a task for itself.
     *   **Observe:**
-        *   The status of the assigning agent (in the UI and WebGL) might change to "waiting_for_completion" (orange cube).
-        *   The status of the receiving agent (in the UI and WebGL) should change to "busy" (red cube) while it simulates processing the task.
-        *   After a few seconds, the receiving agent will complete the task, its status will change to "idle" (blue cube), and it will send a completion message back.
-        *   The assigning agent will then also return to "idle" (blue cube).
+        *   The status of the assigning agent (in its UI and WebGL representation) should change to "waiting_for_completion" (orange cube).
+        *   The status of the receiving agent (in its UI and WebGL representation) should change to "busy" (red cube) while it simulates processing.
+        *   After a few seconds, the receiving agent completes the task, its status returns to "idle" (blue cube), and it sends a completion message back.
+        *   The assigning agent then also returns to "idle" (blue cube).
 
-4.  **Viewing Task Results:**
-    *   In the window of the agent that **originally assigned the task**, its "Completed Tasks" list (at the bottom of the control panel) should update with the result of the task once the remote agent completes it and sends the notification back.
-    *   In the window of the agent that **processed the task**, click the "View Local Completed Tasks" button. This will display a list of tasks it has completed, including the one it just processed. You can also click this button in the assigner's window to see a consolidated list.
+5.  **Viewing Task Results:**
+    *   The "Completed Task Results" list in the UI of the **assigning agent's window** should update when the remote agent reports task completion.
+    *   If a task was assigned locally, the list in that agent's window will update once it processes it.
+    *   (The "View Local Completed Tasks" button was removed in favor of the live-updating list, but similar functionality to inspect an agent's full task history could be re-added).
 
-5.  **WebGL Visualization:**
+6.  **WebGL Visualization:**
     *   The 3D canvas displays cubes that represent the agents in the system.
     *   **Colors indicate agent status:**
         *   **Blue:** Idle (available for tasks).
@@ -172,77 +179,81 @@ graph TD
     B -- Manages --> C[WebGL View];
     B -- Manages --> D[Local Agent Logic / Agent Coordination];
     B -- Manages --> E[P2P Communication Module];
-    E -- WebRTC Data Channel --> F[Other Peer Agent(s)];
+
+    E -- Via WebSocket --> S[Signaling Server];
+    S -- Relays Handshake --> E;
+
+    E -- Establishes WebRTC Data Channel --> F[Other Peer Agents P2P Module];
+    F -- Manages --> FD[Remote Agent Logic];
+    FD -- Updates --> FC[Remote WebGL View];
+
     D -- Updates --> C;
     D -- Uses --> E;
 
-    subgraph futuras_Server [Future: Signaling Server]
-        direction LR
-        S1[Signaling Server]
-    end
-    E -. Optional Signaling .-> S1;
-    F -. Optional Signaling .-> S1;
-
     style B fill:#lightblue,stroke:#333,stroke-width:2px
     style C fill:#lightgreen,stroke:#333,stroke-width:2px
+    style S fill:#pink,stroke:#333,stroke-width:2px
     style D fill:#lightyellow,stroke:#333,stroke-width:2px
     style E fill:#orange,stroke:#333,stroke-width:2px
     style F fill:#lightgray,stroke:#333,stroke-width:2px
-    style S1 fill:#pink,stroke:#333,stroke-width:2px
+    style FD fill:#lightyellow,stroke:#333,stroke-width:1px,stroke-dasharray: 5 5
+    style FC fill:#lightgreen,stroke:#333,stroke-width:1px,stroke-dasharray: 5 5
 ```
 
 **Diagram Legend:**
--   **User:** The human operator interacting with the system.
--   **PWA Interface:** The Progressive Web Application running in the browser, serving as the main user entry point and container for other modules.
--   **WebGL View:** Renders the visual representation of agents and their states.
--   **Local Agent Logic / Agent Coordination:** Contains the `Agent` class, task management, and decision-making for the agent running in this PWA instance.
--   **P2P Communication Module:** Handles WebRTC connection setup and data channel communication with other peers.
--   **Other Peer Agent(s):** Other instances of the PWA/agent system running in different browser contexts.
--   **Signaling Server (Future):** A potential future component for automating peer discovery.
+-   **User:** The human operator.
+-   **PWA Interface:** The main application interface in the browser.
+-   **WebGL View:** Renders agent visuals.
+-   **Local Agent Logic / Agent Coordination:** Manages tasks and agent state for the local instance.
+-   **P2P Communication Module:** Handles WebRTC connections and signaling server interaction.
+-   **Signaling Server:** Node.js WebSocket server facilitating peer discovery and WebRTC handshake.
+-   **Other Peer Agents P2P Module:** The P2P module in another browser instance.
+-   **Remote Agent Logic / Remote WebGL View:** Represents the agent logic and view in the peer's browser.
+
 
 ### Task Assignment Flow
 
-This sequence diagram illustrates the process of one agent assigning a task to another.
+This sequence diagram illustrates the process of one agent assigning a task to another using the signaling server for initial P2P setup. (The P2P connection is assumed to be established before this flow begins).
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Browser1_PWA [Browser 1: PWA (Agent A - Assigner)]
+    participant Browser1_PWA [Browser 1: PWA - Agent A Assigner]
+    participant AgentCoord_A [Browser 1: Agent Logic - Agent A]
     participant WebGL_A [Browser 1: WebGL View]
-    participant P2P_A [Browser 1: P2P Module (Agent A)]
-    participant AgentCoord_A [Browser 1: Agent Logic (Agent A)]
 
-    participant Browser2_PWA [Browser 2: PWA (Agent B - Processor)]
+    participant Browser2_PWA [Browser 2: PWA - Agent B Processor]
+    participant AgentCoord_B [Browser 2: Agent Logic - Agent B]
     participant WebGL_B [Browser 2: WebGL View]
-    participant P2P_B [Browser 2: P2P Module (Agent B)]
-    participant AgentCoord_B [Browser 2: Agent Logic (Agent B)]
 
-    User->>Browser1_PWA: Clicks "Assign Task" button
-    Browser1_PWA->>AgentCoord_A: initiateTaskAssignment(AgentA, AgentB_ID, "Process data")
+    Note over Browser1_PWA, Browser2_PWA: P2P Data Channel already established via Signaling Server.
+
+    User->>Browser1_PWA: Selects Peer B, Clicks "Assign Task"
+    Browser1_PWA->>AgentCoord_A: initiateTaskAssignment(AgentA, PeerB_ID, "Process data")
     AgentCoord_A->>AgentCoord_A: Create Task_XYZ (assignerId=A)
-    AgentCoord_A->>AgentCoord_A: Update Agent A status to 'waiting_for_completion'
+    AgentCoord_A->>AgentCoord_A: Set Agent A status: 'waiting_for_completion'
     AgentCoord_A->>WebGL_A: updateAgentRepresentation(A, 'waiting_for_completion')
-    AgentCoord_A->>P2P_A: Send 'taskAssignment' (Task_XYZ) to Agent B
 
-    P2P_A-->>P2P_B: WebRTC Data: {type: 'taskAssignment', task: Task_XYZ}
-    P2P_B->>AgentCoord_B: handleMessage(taskAssignment_data)
-    AgentCoord_B->>AgentCoord_B: Update Agent B status to 'busy'
+    Note over AgentCoord_A, AgentCoord_B: Agent A sends 'taskAssignment' (Task_XYZ)\nvia P2P Data Channel to Agent B.
+    AgentCoord_A-->>AgentCoord_B: DC Msg: {type: 'taskAssignment', task: Task_XYZ}
+
+    AgentCoord_B->>AgentCoord_B: Receive task, Set Agent B status: 'busy'
     AgentCoord_B->>WebGL_B: updateAgentRepresentation(B, 'busy')
-    AgentCoord_B->>AgentCoord_B: Simulate async work (setTimeout) for Task_XYZ
+    AgentCoord_B->>AgentCoord_B: Simulate async work for Task_XYZ
 
     Note right of AgentCoord_B: Agent B processes task...
 
     AgentCoord_B->>AgentCoord_B: Task_XYZ completed, result: "Done"
-    AgentCoord_B->>AgentCoord_B: Update Agent B status to 'idle'
+    AgentCoord_B->>AgentCoord_B: Set Agent B status: 'idle'
     AgentCoord_B->>WebGL_B: updateAgentRepresentation(B, 'idle')
-    AgentCoord_B->>P2P_B: Send 'taskCompleted' (Task_XYZ, result) to Agent A
 
-    P2P_B-->>P2P_A: WebRTC Data: {type: 'taskCompleted', taskId: XYZ, result: "Done"}
-    P2P_A->>AgentCoord_A: handleMessage(taskCompleted_data)
-    AgentCoord_A->>AgentCoord_A: Update Task_XYZ in assignedTasks with result
-    AgentCoord_A->>AgentCoord_A: Update Agent A status to 'idle'
+    Note over AgentCoord_B, AgentCoord_A: Agent B sends 'taskCompleted' (Task_XYZ, result)\nvia P2P Data Channel to Agent A.
+    AgentCoord_B-->>AgentCoord_A: DC Msg: {type: 'taskCompleted', taskId: XYZ, result: "Done"}
+
+    AgentCoord_A->>AgentCoord_A: Receive completion, Update Task_XYZ
+    AgentCoord_A->>AgentCoord_A: Set Agent A status: 'idle'
     AgentCoord_A->>WebGL_A: updateAgentRepresentation(A, 'idle')
-    AgentCoord_A->>Browser1_PWA: Update UI (e.g., completed tasks list)
+    AgentCoord_A->>Browser1_PWA: Update UI with task result
 ```
 
 ## Future Work / Roadmap

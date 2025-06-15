@@ -27,25 +27,30 @@
 </head>
 <body>
   <canvas id="webgl-canvas"></canvas>
-  <div style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(255,255,255,0.7); padding: 10px;">
-    <button id="initP2PButton">Initialize P2P Connection</button>
-    <button id="createOfferButton">1. Create Offer</button>
-    <br>
-    <textarea id="offerSdp" placeholder="Paste Offer SDP here then click Handle Offer"></textarea>
-    <button id="handleOfferButton">2. Handle Offer / Create Answer</button>
-    <br>
-    <textarea id="answerSdp" placeholder="Paste Answer SDP here then click Handle Answer"></textarea>
-    <button id="handleAnswerButton">3. Handle Answer</button>
-    <br>
+  <div style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(255,255,255,0.8); padding: 10px; font-family: sans-serif; font-size: 0.9em; max-width: 350px;">
+    <h4>Signaling & P2P Control</h4>
+    <button id="connectSignalButton">Connect to Signaling Server</button>
+    <p>My Client ID: <span id="myClientIdDisplay">N/A</span></p>
+    <p>Signaling Status: <span id="signalingStatus">Disconnected</span></p>
     <hr>
-    <button id="assignTaskButton">Assign Task (Test)</button>
-    <button id="viewLocalCompletedTasksButton">View Local Completed Tasks</button>
-    <p>P2P Status: <span id="p2pStatus">Not connected</span></p>
-    <p>Local Agent: <span id="localAgentStatus">N/A</span></p>
-    <p>Remote Agent: <span id="remoteAgentStatus">N/A</span></p>
-    <div id="completedTasksDisplay" style="margin-top: 10px; border: 1px solid #ccc; padding: 5px; max-height: 200px; overflow-y: auto;">
-      <h4>Completed Task Results:</h4>
-      <ul id="completedTasksList"></ul>
+    <button id="discoverPeersButton" disabled>Discover Peers</button>
+    <div style="margin-top: 5px;">
+      Available Peers:
+      <ul id="peersList" style="max-height: 100px; overflow-y: auto; border: 1px solid #eee; padding: 5px; margin: 0;"></ul>
+    </div>
+    <hr>
+    <h4>Agent Control</h4>
+    <label for="taskTargetPeer">Target Peer for Task:</label>
+    <select id="taskTargetPeer" style="margin-bottom: 5px;"></select><br>
+    <button id="assignTaskButton" disabled>Assign Task to Selected Peer</button>
+    <button id="assignTaskLocallyButton">Assign Task Locally</button>
+    <hr>
+    <h4>Status & Results</h4>
+    <p>Local Agent (<span id="localAgentIdDisplay">N/A</span>): <span id="localAgentStatus">N/A</span></p>
+    <p>P2P Connections: <span id="p2pStatusDisplay">Idle</span></p> <!-- General P2P status or specific peer status -->
+    <div id="completedTasksDisplay" style="margin-top: 10px; border: 1px solid #ccc; padding: 5px; max-height: 150px; overflow-y: auto;">
+      <h5>Completed Task Results:</h5>
+      <ul id="completedTasksList" style="padding-left: 20px; margin:0;"></ul>
     </div>
   </div>
 
@@ -53,163 +58,164 @@
   <script src="../shared/p2p.js"></script>
   <script src="../webgl/main.js"></script>
   <script>
-    // P2P UI Logic
-    const initP2PButton = document.getElementById('initP2PButton');
-    const createOfferButton = document.getElementById('createOfferButton');
-    const handleOfferButton = document.getElementById('handleOfferButton');
-    const handleAnswerButton = document.getElementById('handleAnswerButton');
-    const offerSdpText = document.getElementById('offerSdp');
-    const answerSdpText = document.getElementById('answerSdp');
-    const assignTaskButton = document.getElementById('assignTaskButton');
-    const p2pStatus = document.getElementById('p2pStatus');
-    const localAgentStatus = document.getElementById('localAgentStatus');
-    const remoteAgentStatus = document.getElementById('remoteAgentStatus');
-    const completedTasksList = document.getElementById('completedTasksList');
-    const viewLocalCompletedTasksButton = document.getElementById('viewLocalCompletedTasksButton');
+    // --- UI Elements ---
+    const connectSignalButton = document.getElementById('connectSignalButton');
+    const myClientIdDisplay = document.getElementById('myClientIdDisplay');
+    const signalingStatus = document.getElementById('signalingStatus');
+    const discoverPeersButton = document.getElementById('discoverPeersButton');
+    const peersList = document.getElementById('peersList');
+    const taskTargetPeerSelect = document.getElementById('taskTargetPeer');
 
+    const assignTaskButton = document.getElementById('assignTaskButton'); // Re-purposed
+    const assignTaskLocallyButton = document.getElementById('assignTaskLocallyButton');
 
-    // Function to be called by agent-coordination.js when a task result is ready for display
+    const localAgentIdDisplay = document.getElementById('localAgentIdDisplay');
+    const localAgentStatus = document.getElementById('localAgentStatus'); // Re-purposed
+    const p2pStatusDisplay = document.getElementById('p2pStatusDisplay');
+    const completedTasksList = document.getElementById('completedTasksList'); // Re-purposed
+
+    // --- P2P and Agent Logic (from window.p2p and global Agent/initiateTaskAssignment) ---
+    // Ensure p2p.js and agent-coordination.js are loaded before this script runs.
+    const p2p = window.p2p;
+
+    // --- UI Update Functions ---
+    window.updateMyClientIdDisplay = function(clientId) {
+      myClientIdDisplay.textContent = clientId || 'N/A';
+      localAgentIdDisplay.textContent = clientId || 'N/A';
+      if (clientId) {
+        signalingStatus.textContent = 'Connected';
+        discoverPeersButton.disabled = false;
+        // Create local agent if not already done by p2p.js
+        if (!p2p.getLocalAgent() && typeof Agent !== 'undefined') {
+            window.localAgent = new Agent(clientId, null); // p2p.localAgent will also be this
+            console.log("Local agent explicitly created in UI script for ID: " + clientId);
+        }
+      } else {
+        signalingStatus.textContent = 'Disconnected';
+        discoverPeersButton.disabled = true;
+        assignTaskButton.disabled = true;
+      }
+      updateAgentStatusDisplay(); // Update full status
+    };
+
+    window.updatePeersList = function(peerIds) {
+      peersList.innerHTML = '';
+      taskTargetPeerSelect.innerHTML = '<option value="">Select Peer</option>';
+      peerIds.forEach(peerId => {
+        if (peerId === p2p.getMyClientId()) return; // Don't list self
+
+        const listItem = document.createElement('li');
+        listItem.textContent = `${peerId} `;
+        const connectButton = document.createElement('button');
+        connectButton.textContent = 'Connect';
+        connectButton.onclick = () => p2p.initiateP2PConnection(peerId);
+        listItem.appendChild(connectButton);
+        peersList.appendChild(listItem);
+
+        const optionItem = document.createElement('option');
+        optionItem.value = peerId;
+        optionItem.textContent = peerId;
+        taskTargetPeerSelect.appendChild(optionItem);
+      });
+      assignTaskButton.disabled = peerIds.length === 0;
+    };
+
+    window.updateP2PStatus = function(peerId, status) {
+        // For now, a simple display. Could be a list of connections.
+        p2pStatusDisplay.textContent = `Peer ${peerId}: ${status}`;
+        if (status === 'connected') {
+            // Optionally update taskTargetPeerSelect or enable assign task button
+        }
+    };
+
+    window.updatePeerDisconnected = function(peerId) {
+        p2pStatusDisplay.textContent = `Peer ${peerId}: Disconnected`;
+        // Remove from taskTargetPeerSelect if present
+        const option = taskTargetPeerSelect.querySelector(`option[value="${peerId}"]`);
+        if (option) option.remove();
+        // Refresh peer list from server if desired, or wait for next discoverPeers click
+    };
+
     window.updateCompletedTasksDisplay = function(agentId, task) {
       const item = document.createElement('li');
-      item.textContent = `Agent ${agentId} (originally assigned task ${task.id}): ${task.description} -> ${task.result}`;
+      item.textContent = `Task ${task.id} (for ${agentId}): ${task.description} -> ${task.result}`;
       completedTasksList.appendChild(item);
     };
 
-    viewLocalCompletedTasksButton.onclick = () => {
-      const la = getLocalAgent();
-      if (la) {
-        completedTasksList.innerHTML = ''; // Clear previous
-        const tasksToShow = [...la.completedTasks, ...Object.values(la.assignedTasks).filter(t => t.status === 'completed')];
-        if (tasksToShow.length === 0) {
-            const item = document.createElement('li');
-            item.textContent = `No completed tasks found for ${la.id}.`;
-            completedTasksList.appendChild(item);
-            return;
-        }
-        tasksToShow.forEach(task => {
-          const item = document.createElement('li');
-          let prefix = "";
-          if (la.completedTasks.includes(task)) {
-            prefix = `(Completed by ${la.id}): `;
-          } else {
-            prefix = `(Task ${task.id} assigned by ${la.id}, completed by other): `;
-          }
-          item.textContent = `${prefix} ${task.description} -> ${task.result}`;
-          completedTasksList.appendChild(item);
-        });
-      } else {
-        alert("Local agent not initialized.");
-      }
+    // --- Event Listeners ---
+    connectSignalButton.onclick = () => {
+      p2p.connectSignalingServer(); // Uses default URL ws://localhost:8080
+      signalingStatus.textContent = 'Connecting...';
     };
 
-    initP2PButton.onclick = () => {
-      initializePeerConnection(); // from p2p.js
-      p2pStatus.textContent = 'PeerConnection Initialized. Create an offer or wait for one.';
-      console.log("PeerConnection initialized via UI button.");
-      // Update agent statuses periodically or on events
-      setInterval(updateAgentStatusDisplay, 1000);
-    };
-
-    createOfferButton.onclick = async () => {
-      if (!getPeerConnection()) {
-        alert('Initialize P2P first!');
-        return;
-      }
-      await createOfferAndSetLocal(); // from p2p.js
-      offerSdpText.value = JSON.stringify(getPeerConnection().localDescription);
-      p2pStatus.textContent = 'Offer created. Copy it and send to peer. Then wait for an answer.';
-      console.log("Offer created via UI button.");
-    };
-
-    handleOfferButton.onclick = async () => {
-      if (!getPeerConnection()) {
-        alert('Initialize P2P first!');
-        return;
-      }
-      try {
-        const offer = JSON.parse(offerSdpText.value);
-        await handleOfferAndCreateAnswer(offer); // from p2p.js
-        answerSdpText.value = JSON.stringify(getPeerConnection().localDescription);
-        p2pStatus.textContent = 'Offer handled, answer created. Copy answer and send to offering peer.';
-        console.log("Offer handled and answer created via UI button.");
-      } catch (e) {
-        alert('Invalid Offer SDP or error handling offer: ' + e.message);
-        console.error(e);
-      }
-    };
-
-    handleAnswerButton.onclick = async () => {
-      if (!getPeerConnection()) {
-        alert('Initialize P2P first!');
-        return;
-      }
-      try {
-        const answer = JSON.parse(answerSdpText.value);
-        await handleAnswer(answer); // from p2p.js
-        p2pStatus.textContent = 'Answer handled. Connection should be established if ICE succeeds.';
-        console.log("Answer handled via UI button.");
-      } catch (e) {
-        alert('Invalid Answer SDP or error handling answer: ' + e.message);
-        console.error(e);
-      }
+    discoverPeersButton.onclick = () => {
+      p2p.discoverPeers();
     };
 
     assignTaskButton.onclick = () => {
-      const localAg = getLocalAgent(); // from p2p.js
-      const remoteAg = getRemoteAgent(); // from p2p.js
+      const localAg = p2p.getLocalAgent();
+      const targetPeerId = taskTargetPeerSelect.value;
 
       if (!localAg) {
-        alert('Local agent not initialized. Establish P2P connection first.');
+        alert('Local agent not initialized. Connect to signaling server.');
         return;
       }
-
-      // For testing, let's assume localAgent assigns a task to remoteAgent if it exists,
-      // otherwise to itself.
-      const taskDesc = "Process data block X";
-      if (remoteAg && remoteAg.dataChannel && remoteAg.dataChannel.readyState === 'open') {
-        console.log("UI: Assigning task from local to remote");
-        initiateTaskAssignment(localAg, remoteAg.id, taskDesc + " for remote");
-      } else if (localAg) {
-        console.log("UI: Assigning task from local to local (remote not available or channel closed)");
-        // The initiateTaskAssignment will assign to localAg if remoteAg is not found or channel not open
-        initiateTaskAssignment(localAg, 'RemoteAgent_Receiver', taskDesc + " for local self-test");
+      if (!targetPeerId) {
+        alert('Please select a target peer from the list.');
+        return;
       }
-       updateAgentStatusDisplay();
+      const taskDesc = "Process data block XYZ via P2P";
+      initiateTaskAssignment(localAg, targetPeerId, taskDesc);
+      updateAgentStatusDisplay();
+    };
+
+    assignTaskLocallyButton.onclick = () => {
+        const localAg = p2p.getLocalAgent();
+        if (!localAg) {
+            // Try to initialize local agent if myClientId is available
+            const myId = p2p.getMyClientId();
+            if (myId && typeof Agent !== 'undefined') {
+                 window.localAgent = new Agent(myId, null); // p2p.localAgent will also be this
+                 console.log("Local agent created on demand for local task for ID: " + myId);
+                 if(p2p.setLocalAgent) p2p.setLocalAgent(window.localAgent); // if p2p.js needs explicit set
+            } else {
+                alert('Local agent not initialized. Connect to signaling server.');
+                return;
+            }
+        }
+        const taskDesc = "Process data block ABC locally";
+        initiateTaskAssignment(p2p.getLocalAgent(), p2p.getMyClientId(), taskDesc); // Assign to self
+        updateAgentStatusDisplay();
     };
 
     function updateAgentStatusDisplay() {
-        const la = getLocalAgent();
-        const ra = getRemoteAgent();
-        let currentLocalTaskDesc = 'none';
+        const la = p2p.getLocalAgent();
         if (la) {
-            if (la.currentTask) currentLocalTaskDesc = la.currentTask.description;
-            else if (la.status === 'waiting_for_completion') {
-                const waitingTask = Object.values(la.assignedTasks).find(t => t.status === 'assigned' || t.status === 'in_progress');
+            localAgentIdDisplay.textContent = la.id; // Update local agent ID display
+            let currentLocalTaskDesc = 'none';
+            if (la.currentTask) {
+                currentLocalTaskDesc = la.currentTask.description;
+            } else if (la.status === 'waiting_for_completion') {
+                const waitingTask = Object.values(la.assignedTasks).find(t => t.status === 'assigned_remote' || t.status === 'in_progress');
                 if(waitingTask) currentLocalTaskDesc = `Waiting for: ${waitingTask.description}`;
             }
-            localAgentStatus.textContent = `${la.id} - ${la.status} (Task: ${currentLocalTaskDesc})`;
+            localAgentStatus.textContent = `${la.status} (Task: ${currentLocalTaskDesc})`;
         } else {
-            localAgentStatus.textContent = "N/A";
+            localAgentIdDisplay.textContent = p2p.getMyClientId() || 'N/A';
+            localAgentStatus.textContent = "N/A (not fully initialized)";
         }
 
-        if(ra) {
-            let currentRemoteTaskDesc = ra.currentTask ? ra.currentTask.description : 'none';
-             if (ra.status === 'waiting_for_completion') { // Should not typically happen for remote representation via this UI
-                const waitingTask = Object.values(ra.assignedTasks).find(t => t.status === 'assigned' || t.status === 'in_progress');
-                if(waitingTask) currentRemoteTaskDesc = `Waiting for: ${waitingTask.description}`;
-            }
-            remoteAgentStatus.textContent = `${ra.id} - ${ra.status} (Task: ${currentRemoteTaskDesc})`;
-        } else {
-            remoteAgentStatus.textContent = "N/A";
-        }
-
-        const pc = getPeerConnection();
-        if (pc) {
-            p2pStatus.textContent = `P2P ICE: ${pc.iceConnectionState}, Channel: ${getDataChannel() ? getDataChannel().readyState : 'N/A'}`;
-        }
+        // For simplicity, P2P status is generic. Detailed status per peer is in updateP2PStatus.
+        // We can list all active connections here if needed.
+        // const activeCons = p2p.getAllPeerConnections ? Object.keys(p2p.getAllPeerConnections()) : [];
+        // p2pStatusDisplay.textContent = activeCons.length > 0 ? `Connected to ${activeCons.join(', ')}` : "Idle";
     }
-    // Initial call to set status might be too early if scripts are not fully loaded.
-    // setInterval(updateAgentStatusDisplay, 1000); // Already initialized in initP2PButton.onclick
+
+    // Auto-connect to signaling server on page load
+    // connectSignalButton.click(); // Or: p2p.connectSignalingServer();
+
+    // Update agent statuses periodically
+    setInterval(updateAgentStatusDisplay, 2000);
   </script>
 </body>
 </html>
